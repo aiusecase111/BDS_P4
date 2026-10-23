@@ -1,0 +1,174 @@
+kubectl version --client
+kubectl cluster-info
+kubectl get nodes
+================================
+
+
+
+app-config.yaml
+----------------------------
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_MODE: "development"
+  WELCOME_MESSAGE: "Hello from Kubernetes ConfigMap"
+--------------------
+kubectl apply -f app-config.yaml
+kubectl get configmap
+kubectl describe configmap app-config
+
+
+========================
+app-secret.yaml
+--------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+type: Opaque
+stringData:
+  DB_USERNAME: "labuser"
+  DB_PASSWORD: "LabPass@123"
+
+=========================
+kubectl apply -f app-secret.yaml
+kubectl get secrets
+kubectl describe secret app-secret
+
+
+==============
+config-app-deployment.yaml
+===============
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: config-app
+  template:
+    metadata:
+      labels:
+        app: config-app
+    spec:
+      containers:
+      - name: web
+        image: nginx:alpine
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          cat > /usr/share/nginx/html/index.html <<EOF
+          <html>
+          <body>
+            <h1>Configuration Management Demo</h1>
+            <p>Mode: ${APP_MODE}</p>
+            <p>${WELCOME_MESSAGE}</p>
+            <p>DB User configured: ${DB_USERNAME}</p>
+            <p>DB Password: [MASKED]</p>
+          </body>
+          </html>
+          EOF
+          nginx -g 'daemon off;'
+        env:
+        - name: APP_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: APP_MODE
+        - name: WELCOME_MESSAGE
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: WELCOME_MESSAGE
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secret
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secret
+              key: DB_PASSWORD
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /etc/app-secret
+          readOnly: true
+        - name: config-volume
+          mountPath: /etc/app-config
+          readOnly: true
+      volumes:
+      - name: secret-volume
+        secret:
+          secretName: app-secret
+      - name: config-volume
+        configMap:
+          name: app-config
+-------------
+kubectl apply -f config-app-deployment.yaml
+kubectl get pods -l app=config-app
+
+=============
+app-service.yaml
+=============
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-app-service
+spec:
+  type: NodePort
+  selector:
+    app: config-app
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+    
+--------------
+kubectl apply -f app-service.yaml
+http://localhost:30080
+curl http://localhost:30080
+
+----------
+kubectl get pods -l app=config-app
+kubectl exec <pod-name> -- ls /etc/app-config/
+kubectl exec <pod-name> -- cat /etc/app-config/APP_MODE
+kubectl exec <pod-name> -- cat /etc/app-config/WELCOME_MESSAGE
+kubectl exec <pod-name> -- ls /etc/app-secret/
+kubectl exec <pod-name> -- cat /etc/app-secret/DB_USERNAME
+kubectl exec <pod-name> -- cat /etc/app-secret/DB_PASSWORD
+
+
+=======
+ Update the ConfigMap and See Changes
+ ======
+
+kubectl edit configmap app-config
+APP_MODE: "development"        →  APP_MODE: "production"
+kubectl get configmap app-config -o yaml
+kubectl rollout restart deployment config-app
+kubectl rollout status deployment config-app
+
+ http://localhost:30080
+
+
+==============
+Update the Secret
+===============
+
+kubectl delete secret app-secret
+
+kubectl create secret generic app-secret ^
+    --from-literal=DB_USERNAME=admin ^
+    --from-literal=DB_PASSWORD=NewSecurePass@456
+
+kubectl get secret app-secret -o jsonpath="{.data.DB_USERNAME}" | base64 --decode
+kubectl rollout restart deployment config-app'
+http://localhost:30080
